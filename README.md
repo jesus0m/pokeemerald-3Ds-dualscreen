@@ -75,6 +75,19 @@ in the releases.
 - Data: generated on the player's computer by the
   [Pokémon Emerald 3Ds Dual Screen Builder](builder/) from a Pokémon Emerald (USA, Europe) ROM.
 
+## macOS / Spanish adaptation branch
+
+This branch adds a macOS launcher, a tested Docker 3DS build workflow, compiler preflight and native release packaging,
+and builds Spanish game data from a clean BPES ROM. The Spanish source build,
+matching extraction recipe and native Apple Silicon builder are implemented.
+The builder also offers **Generate CIA**, producing a standalone installable
+game with all data embedded, for HOME Menu launch on a console with Luma3DS.
+Spanish console fingerprint validation and missing touch-screen resources
+from static header assets are fixed in this branch.
+The original v0.1.2 English payload still requires BPEE. This adaptation is an
+experimental release; the contributor reports the corrected build works on a physical 3DS. Instructions
+and validation are in [docs/MACOS.md](docs/MACOS.md).
+
 ## Playing
 
 For full installation, sound and update instructions, see

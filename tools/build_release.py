@@ -10,7 +10,7 @@ Steps (each can be skipped when its output is already there):
 2. the recipe (tools/gen_recipe.py) from the build's staging and the ROM;
 3. the payload: executable, recipe and the voxel generator scripts;
 4. the standalone builder (PyInstaller, one folder, no UPX);
-5. dist/Emerald3DS-v<version>-Windows.zip with the builder, the payload,
+5. a host-specific ZIP (Windows, macOS or Linux) with the builder, the payload,
    README.txt and LICENSES/;
 6. tools/release_audit.py over the ZIP (and, with --rom, a scan for any run of
    the ROM's bytes), then SHA256SUMS.txt.
@@ -25,6 +25,7 @@ import argparse
 import ast
 import hashlib
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -79,8 +80,11 @@ def sha256(path: Path) -> str:
 
 
 def main() -> None:
+    global PORT
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", required=True)
+    ap.add_argument("--tree", type=Path, default=ROOT, help="bootstrapped source tree to package")
+    ap.add_argument("--indexed-search", action="store_true", help="use optional pydivsufsort for recipe searches")
     ap.add_argument("--rom", type=Path, required=True)
     ap.add_argument("--gba-elf", type=Path, required=True, help="the original game's ELF (symbol names)")
     ap.add_argument("--nm", default=os.environ.get("NM", "arm-none-eabi-nm"))
@@ -88,14 +92,25 @@ def main() -> None:
     ap.add_argument("--skip-make", action="store_true")
     ap.add_argument("--skip-recipe", action="store_true")
     ap.add_argument("--skip-exe", action="store_true")
+    ap.add_argument("--cia", action="store_true", help="include native standalone CIA export tools")
+    ap.add_argument("--cia-tools-dir", type=Path, default=ROOT / "build/cia-tools")
     args = ap.parse_args()
+    PORT = args.tree.resolve() / "3ds_port"
 
     tag = "v" + args.version
-    release = DIST / ("Emerald3DS-%s-Windows" % tag)
+    system = platform.system()
+    target = {"Darwin": "macOS", "Windows": "Windows", "Linux": "Linux"}.get(system)
+    if target is None:
+        raise SystemExit("Unsupported release host: %s" % system)
+    if target != "Windows":
+        target += "-" + platform.machine()
+    release = DIST / ("Emerald3DS-%s-%s" % (tag, target))
     payload = release / "payload"
 
     if not args.skip_make:
-        run((args.make.split() if args.make else ["make"]) + ["release"], cwd=PORT)
+        make_cmd = args.make.split() if args.make else ["make"]
+        run(make_cmd + ["release"], cwd=PORT,
+            env=dict(os.environ, EMERALD3DS_MAKE=make_cmd[0]))
     DIST.mkdir(parents=True, exist_ok=True)
     recipe = DIST / "emerald3ds.recipe"
     if not args.skip_recipe:
@@ -103,7 +118,9 @@ def main() -> None:
              "--out", recipe, "--release", tag, "--elf", PORT / "emerald3ds.elf",
              "--gba-elf", args.gba_elf, "--image-elf", PORT / "build/gamedata_image.elf",
              "--image-map", PORT / "build/gamedata_image.map", "--nm", args.nm,
-             "--report", DIST / "recipe-literal-report.txt"])
+             "--decomp", args.tree.resolve(),
+             "--report", DIST / "recipe-literal-report.txt"]
+            + (["--indexed-search"] if args.indexed_search else []))
 
     if release.exists():
         shutil.rmtree(release)
@@ -111,6 +128,17 @@ def main() -> None:
     for name in ("Emerald3DS.3dsx", "Emerald3DS.smdh"):
         shutil.copy2(PORT / "dist" / name, payload / name)
     shutil.copy2(recipe, payload / "emerald3ds.recipe")
+    if args.cia:
+        tool_root = args.cia_tools_dir.resolve()
+        host = 'mac' if system == 'Darwin' else 'linux' if system == 'Linux' else 'windows'
+        banner = tool_root / 'bannertool/output' / (host + '-' + platform.machine()) / 'bannertool'
+        makerom = tool_root / 'Project_CTR/makerom/bin/makerom'
+        if system == 'Windows':
+            banner = banner.with_suffix('.exe')
+            makerom = makerom.with_suffix('.exe')
+        run([sys.executable, ROOT / 'tools/prepare_cia.py', '--port', PORT,
+             '--recipe', recipe, '--makerom', makerom, '--bannertool', banner,
+             '--out', payload / 'cia'])
     scripts, external = local_closure(PORT / "scripts", GENERATORS)
     (payload / "voxelgen" / "scripts").mkdir(parents=True)
     for name in scripts:
@@ -127,19 +155,46 @@ def main() -> None:
         run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
              "--distpath", build / "dist", "--workpath", build / "pyi", "emerald3ds-builder.spec"],
             cwd=ROOT / "builder")
-        shutil.copytree(build / "dist" / "Emerald3DS-Builder", release, dirs_exist_ok=True)
+    frozen = ROOT / "builder/build/dist/Emerald3DS-Builder"
+    if not frozen.is_dir():
+        raise SystemExit("No frozen builder exists; run without --skip-exe first.")
+    shutil.copytree(frozen, release, dirs_exist_ok=True)
 
     shutil.copy2(ROOT / "builder" / "README-release.txt", release / "README.txt")
     licenses = release / "LICENSES"
     licenses.mkdir()
     for rel in ("LICENSE-PORT.md", "NOTICE.md", "AI_DISCLOSURE.md"):
-        src = ROOT / "public" / rel
+        src = ROOT / rel
         if src.exists():
             shutil.copy2(src, licenses / rel)
     for rel in ("3ds_port/src/voxel/NOTICE.md",):
         shutil.copy2(ROOT / rel, licenses / "voxel-NOTICE.md")
+    if args.cia:
+        tool_root = args.cia_tools_dir.resolve()
+        for src, name in [
+            (tool_root / 'Project_CTR/makerom/LICENSE', 'makerom-MIT.txt'),
+            (tool_root / 'Project_CTR/makerom/deps/libmbedtls/LICENSE', 'mbedtls-Apache.txt'),
+            (tool_root / 'Project_CTR/makerom/deps/libyaml/LICENSE', 'libyaml-MIT.txt'),
+            (tool_root / 'GPL-3.0.txt', 'libblz-GPL-3.0.txt'),
+            (tool_root / 'makerom-source.tar.gz', 'makerom-source.tar.gz'),
+            (tool_root / 'bannertool/LICENSE.txt', 'bannertool-MIT.txt'),
+            (ROOT / 'tools/cia/LICENSE-template.txt', 'cia-template-MIT.txt'),
+        ]:
+            shutil.copy2(src, licenses / name)
+        (licenses / 'CIA-TOOLS.txt').write_text(
+            'makerom: https://github.com/3DSGuy/Project_CTR\n'
+            'Pinned source and all build dependencies: makerom-source.tar.gz.\n'
+            'Build: cd makerom; make deps; make program\n'
+            'libblz: GPL-3.0-or-later, CUE (2011). See libblz-GPL-3.0.txt.\n'
+            'bannertool: https://github.com/diasurgical/bannertool (MIT).\n'
+            'Banner: original text/geometry and silence, no cartridge artwork or audio.\n',
+            encoding='utf-8')
 
-    archive = DIST / ("Emerald3DS-%s-Windows.zip" % tag)
+    if system == "Darwin":
+        launcher = release / "Emerald3DS-Builder.command"
+        launcher.write_text('#!/bin/bash\ncd "$(dirname "$0")" || exit 1\nexec ./Emerald3DS-Builder "$@"\n', encoding="utf-8")
+        launcher.chmod(0o755)
+    archive = DIST / ("Emerald3DS-%s-%s.zip" % (tag, target))
     if archive.exists():
         archive.unlink()
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:

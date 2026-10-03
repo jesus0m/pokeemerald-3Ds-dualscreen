@@ -141,7 +141,7 @@ def generate_missing(incbins) -> None:
     print(f"gen_asset_table: generating {len(missing)} missing assets", flush=True)
     jobs = str(max(2, (os.cpu_count() or 2)))
     for start in range(0, len(missing), 400):
-        subprocess.run(["make", "-k", "-j" + jobs] + missing[start:start + 400], cwd=ROOT, check=False)
+        subprocess.run([os.environ.get("EMERALD3DS_MAKE", "make"), "-k", "-j" + jobs] + missing[start:start + 400], cwd=ROOT, check=False)
 
 
 def ensure_asset(rel: str) -> Path | None:
@@ -152,7 +152,7 @@ def ensure_asset(rel: str) -> Path | None:
     if rel.startswith(GENERATE_ON_DEMAND_PREFIXES):
         print(f"gen_asset_table: generating {rel}", flush=True)
         try:
-            subprocess.run(["make", rel], cwd=ROOT, check=False, timeout=MAKE_ASSET_TIMEOUT_SECONDS)
+            subprocess.run([os.environ.get("EMERALD3DS_MAKE", "make"), rel], cwd=ROOT, check=False, timeout=MAKE_ASSET_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             print(f"gen_asset_table: timeout generating {rel}", flush=True)
         if src.exists():
@@ -174,7 +174,7 @@ def copy_or_concat_asset(obj_rel: str, symbol: str, rel_paths: list[str]) -> tup
         dst = FS_DIR / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-        return (f"{URI_PREFIX}{rel.replace('\\', '/')}", src.stat().st_size, [0])
+        return (URI_PREFIX + rel.replace('\\', '/'), src.stat().st_size, [0])
 
     obj_tag = obj_rel.replace("/", "_").replace(".o", "")
     out_rel = Path("generated") / "assets" / f"{obj_tag}__{symbol}.bin"
@@ -193,11 +193,11 @@ def copy_or_concat_asset(obj_rel: str, symbol: str, rel_paths: list[str]) -> tup
             fout.write(data)
             total_size += len(data)
 
-    return (f"{URI_PREFIX}{str(out_rel).replace('\\', '/')}", total_size, offsets)
+    return (URI_PREFIX + str(out_rel).replace('\\', '/'), total_size, offsets)
 
 
 def configure(argv: list[str] | None = None) -> None:
-    global PORT_DIR, MAP_FILE, FS_DIR, URI_PREFIX, OUT_MAP, OUT_PTR_MAP
+    global ROOT, BUILD_EMERALD, PORT_DIR, MAP_FILE, FS_DIR, URI_PREFIX, OUT_MAP, OUT_PTR_MAP
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port-dir", default=str(PORT_DIR))
@@ -207,6 +207,8 @@ def configure(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     PORT_DIR = Path(args.port_dir).resolve()
+    ROOT = PORT_DIR.parent
+    BUILD_EMERALD = ROOT / "build-emerald"
     MAP_FILE = Path(args.map).resolve() if args.map else PORT_DIR / "build" / "emerald3ds.map"
     FS_DIR = Path(args.fs_dir).resolve() if args.fs_dir else PORT_DIR / "romfs"
     URI_PREFIX = args.uri_prefix
@@ -234,7 +236,11 @@ def main() -> None:
         addr = sym_addrs.get((obj_rel, sym))
         if addr is None:
             candidates = sym_addrs_by_name.get(sym, [])
-            if not is_static and len(candidates) == 1:
+            # A static INCBIN declared in a header belongs to the .c file
+            # including it, not an imaginary header-name object. Resolve only
+            # an unambiguous linked occurrence; duplicate private names must
+            # never inherit another translation unit's asset.
+            if len(candidates) == 1 and (not is_static or src_rel.suffix == ".h"):
                 obj_rel, addr = candidates[0]
             else:
                 continue

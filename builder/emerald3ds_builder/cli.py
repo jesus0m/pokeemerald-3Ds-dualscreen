@@ -19,6 +19,7 @@ from .build import Payload, build_pack, default_payload
 from .errors import BuilderError
 from .install import APP_DIR, find_sd_cards, install
 from .recipe import Recipe
+from .cia import build_cia, verify_cia
 
 
 def _progress(fraction: float, message: str) -> None:
@@ -66,7 +67,8 @@ def cmd_verify(args) -> int:
             want = expected.get(pid)
             if want is None or want["crc"] != entry.crc32 or want["size"] != entry.raw_size:
                 raise BuilderError("The data pack does not match this release.")
-        if len(reader.entries) != len(expected) or reader.abi != recipe.engine_abi:
+        if (len(reader.entries) != len(expected) or reader.abi != recipe.engine_abi
+                or reader.rom_sha1 != bytes.fromhex(recipe.rom_sha1)):
             raise BuilderError("The data pack does not match this release.")
     print("OK: %d entries, ABI %08x, release %s" % (count, recipe.engine_abi, recipe.release))
     return 0
@@ -78,6 +80,19 @@ def cmd_detect(args) -> int:
         print("No SD card with a 'Nintendo 3DS' folder was found.")
     for card in cards:
         print(card)
+    return 0
+
+
+def cmd_cia(args) -> int:
+    info = build_cia(Path(args.rom), Payload(args.payload), Path(args.output), _progress)
+    print('CIA: %s (%.1f MiB, title %s)' % (args.output, info['bytes'] / 1048576, info['title_id']))
+    print('Install it with FBI on a 3DS with Luma3DS, then launch it from the HOME Menu.')
+    return 0
+
+
+def cmd_verify_cia(args) -> int:
+    info = verify_cia(Path(args.cia))
+    print('OK CIA: %.1f MiB, title %s' % (info['bytes'] / 1048576, info['title_id']))
     return 0
 
 
@@ -97,11 +112,16 @@ def main(argv=None) -> int:
     i.add_argument("--sd", required=True)
     v = sub.add_parser("verify", help="check a data pack against this release")
     v.add_argument("--pak", required=True)
+    c = sub.add_parser('cia', help='generate a CIA with the complete game included')
+    c.add_argument('--rom', required=True)
+    c.add_argument('--output', required=True, help='archivo .cia de destino')
+    vc = sub.add_parser('verify-cia', help='check the generated CIA integrity')
+    vc.add_argument('--cia', required=True)
     sub.add_parser("detect", help="list SD cards that look like a 3DS card")
     args = ap.parse_args(argv)
     try:
         return {"build": cmd_build, "install": cmd_install, "verify": cmd_verify,
-                "detect": cmd_detect}[args.cmd](args)
+                "detect": cmd_detect, 'cia': cmd_cia, 'verify-cia': cmd_verify_cia}[args.cmd](args)
     except BuilderError as exc:
         sys.stdout.write("\n")
         print("Error: %s" % exc, file=sys.stderr)
