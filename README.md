@@ -80,12 +80,12 @@ in the releases.
 This branch adds a macOS launcher, a tested Docker 3DS build workflow, compiler preflight and native release packaging,
 and builds Spanish game data from a clean BPES ROM. The Spanish source build,
 matching extraction recipe and native Apple Silicon builder are implemented.
-The builder also offers **Generar CIA**, producing a standalone installable
+The builder also offers **Generate CIA**, producing a standalone installable
 game with all data embedded, for HOME Menu launch on a console with Luma3DS.
 Spanish console fingerprint validation and missing touch-screen resources
 from static header assets are fixed in this branch.
 The original v0.1.2 English payload still requires BPEE. This adaptation is an
-experimental release; physical console testing remains pending. Instructions
+experimental release; the contributor reports the corrected build works on a physical 3DS. Instructions
 and validation are in [docs/MACOS.md](docs/MACOS.md).
 
 ## Playing

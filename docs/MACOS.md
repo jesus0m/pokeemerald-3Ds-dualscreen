@@ -146,7 +146,9 @@ otros sistemas deben compilar sus propias herramientas y verificar el resultado.
   coinciden con el paquete generado; se comprueban sus hashes de contenido,
   ExeFS y RomFS. Las firmas comerciales no son válidas en un paquete homebrew:
   necesita el firmware modificado indicado arriba.
-- Prueba de juego en consola física: pendiente.
+- El usuario confirma que esta versión funciona en su 3DS física, con la
+  aceptación de BPES y la pantalla inferior corregidas. No se ha documentado
+  una partida completa; la integración con el último main necesita otra prueba.
 
 ROMs limpias admitidas, siempre con el payload correspondiente:
 
